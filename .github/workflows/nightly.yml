@@ -1,0 +1,119 @@
+name: Nightly Build
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            target_name: linux-x64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            target_name: linux-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout upstream
+        uses: actions/checkout@v4
+        with:
+          repository: Hmbown/DeepSeek-TUI
+          ref: main
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux system dependencies
+        run: |
+          for i in 1 2 3 4 5; do
+            sudo apt-get update && break
+            echo "apt-get update failed (attempt $i); retrying in 15s"
+            sleep 15
+          done
+          sudo apt-get install -y libdbus-1-dev pkg-config
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Stage artifacts
+        run: |
+          mkdir -p artifacts
+          bin_dir="target/${{ matrix.target }}/release"
+
+          cp "${bin_dir}/deepseek" "artifacts/deepseek-${{ matrix.target_name }}"
+          cp "${bin_dir}/deepseek-tui" "artifacts/deepseek-tui-${{ matrix.target_name }}"
+
+          cat > "artifacts/build-info.txt" <<EOF
+          upstream_repo=Hmbown/DeepSeek-TUI
+          upstream_commit=$(git rev-parse HEAD)
+          upstream_commit_short=$(git rev-parse --short HEAD)
+          target=${{ matrix.target }}
+          target_name=${{ matrix.target_name }}
+          build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nightly-${{ matrix.target_name }}
+          path: artifacts/*
+          retention-days: 7
+
+  release:
+    name: Create nightly release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect upstream commit info
+        id: upstream
+        run: |
+          INFO_FILE=$(find artifacts -name 'build-info.txt' | head -1)
+          if [ -f "$INFO_FILE" ]; then
+            cat "$INFO_FILE"
+            # source the file to extract vars (strip leading spaces from heredoc)
+            while IFS='=' read -r key value; do
+              key=$(echo "$key" | xargs)
+              if [ -n "$key" ] && [ -n "$value" ]; then
+                echo "${key}=${value}" >> "$GITHUB_OUTPUT"
+              fi
+            done < "$INFO_FILE"
+          fi
+
+      - name: Delete old nightly release
+        run: gh release delete nightly --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Create nightly release
+        run: |
+          FILES=$(find artifacts -type f ! -name '*.txt' | tr '\n' ' ')
+          gh release create nightly $FILES \
+            --title "Nightly Build ($(date +%Y-%m-%d))" \
+            --prerelease \
+            --notes "Automated nightly build from [Hmbown/DeepSeek-TUI@${{ steps.upstream.outputs.upstream_commit_short }}](https://github.com/Hmbown/DeepSeek-TUI/commit/${{ steps.upstream.outputs.upstream_commit }})."
+        env:
+          GH_TOKEN: ${{ github.token }}
