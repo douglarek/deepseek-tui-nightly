@@ -36,6 +36,10 @@ jobs:
           repository: Hmbown/DeepSeek-TUI
           ref: main
 
+      - name: Get upstream commit SHA
+        id: upstream_sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -52,6 +56,8 @@ jobs:
           sudo apt-get install -y libdbus-1-dev pkg-config
 
       - name: Build
+        env:
+          DEEPSEEK_BUILD_SHA: ${{ steps.upstream_sha.outputs.sha }}
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Stage artifacts
@@ -65,7 +71,7 @@ jobs:
           cat > "artifacts/build-info.txt" <<EOF
           upstream_repo=Hmbown/DeepSeek-TUI
           upstream_commit=$(git rev-parse HEAD)
-          upstream_commit_short=$(git rev-parse --short HEAD)
+          upstream_commit_short=$(git rev-parse --short=12 HEAD)
           target=${{ matrix.target }}
           target_name=${{ matrix.target_name }}
           build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
