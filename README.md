@@ -14,7 +14,7 @@ Automated nightly builds of [DeepSeek-TUI](https://github.com/Hmbown/DeepSeek-TU
 
 ## Schedule
 
-Builds run daily at UTC midnight, plus on-demand via `workflow_dispatch`.
+Builds run every 30 minutes, plus on-demand via `workflow_dispatch`.
 
 ## Download
 
